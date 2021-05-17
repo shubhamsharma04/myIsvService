@@ -2,12 +2,14 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Graph;
 using Microsoft.Graph.Auth;
 using Microsoft.Identity.Client;
+using myIsvService.Utilities;
 
 namespace myIsvService.Controllers
 {
@@ -18,6 +20,9 @@ namespace myIsvService.Controllers
         private string clientId = "5002759b-3b93-4c7e-bdc1-48a4b2842404";
         private string tenantId = "d8cbc5c5-e484-48ea-af80-fc4083a2a740";
         private string userId = "cbb6d774-d245-4927-9a4f-eea22c3f7ff4";
+        private string schemaErrorMessage = "Unable to find schema";
+        private int maxAttemptsForSchema = 5;
+        private int numberOfMessages = 10;
         private static string clientSecret = Environment.GetEnvironmentVariable(nameof(clientSecret));
 
         private GraphServiceClient graphClient;
@@ -38,11 +43,14 @@ namespace myIsvService.Controllers
 
         [HttpPost]
         [Route("{externalConnectionId}")]
-        public async Task<string> CreateConnectionAndSchema([FromRoute]string externalConnectionId)
+        public async Task<string> CreateConnectionAndSchema([FromRoute] string externalConnectionId)
         {
             _logger.LogInformation("starting creating connection and schema.");
             await CreateConnection(externalConnectionId);
             await CreateSchema(externalConnectionId);
+
+            _logger.LogInformation($"Scheduling item ingestion");
+            Task.Run(() => ScheduleItemIngestion(externalConnectionId));
             return "";
         }
 
@@ -66,7 +74,7 @@ namespace myIsvService.Controllers
                                                 .GetAsync();
             StringBuilder response = new StringBuilder();
 
-            foreach(Microsoft.Graph.ExternalConnectors.ExternalConnection connection in connections)
+            foreach (Microsoft.Graph.ExternalConnectors.ExternalConnection connection in connections)
             {
                 response.Append($"{{ ConnectionName : {connection.Id} ConnectionState : {connection.State} Schema : {connection.Schema?.Id} }}");
                 response.Append("\n");
@@ -80,11 +88,20 @@ namespace myIsvService.Controllers
         public async Task<string> GetConnection([FromRoute] string externalConnectionId)
         {
             _logger.LogInformation($"Getting external connection for : {externalConnectionId}");
-
-            var connection = await graphClient.External.Connections[externalConnectionId]
+            Microsoft.Graph.ExternalConnectors.ExternalConnection connection = null;
+            try
+            {
+                connection = await graphClient.External.Connections[externalConnectionId]
                                                 .Request()
                                                 .GetAsync();
-            return $"{{ ConnectionName : {connection.Id} ConnectionState : {connection.State} Schema : {connection.Schema?.Id} }}";
+            }
+            catch (Exception e)
+            {
+                _logger.LogInformation($"unable to get connection for : {externalConnectionId} because : {e.Message}");
+                return "";
+            }
+
+            return connection.State?.ToString();
         }
 
         [HttpGet]
@@ -93,13 +110,24 @@ namespace myIsvService.Controllers
         {
             _logger.LogInformation($"Getting schema for : {externalConnectionId}");
 
-            var schema = await graphClient.External.Connections[externalConnectionId].Schema
+            Microsoft.Graph.ExternalConnectors.Schema schema = null;
+            try
+            {
+                schema = await graphClient.External.Connections[externalConnectionId].Schema
                                                 .Request()
                                                 .GetAsync();
-            var response = new StringBuilder("Schema\n");
-            if(schema != null)
+            }
+            catch (Exception e)
             {
-                foreach(Microsoft.Graph.ExternalConnectors.Property property in schema.Properties)
+                _logger.LogInformation($"unable to find schema for : {externalConnectionId} because : {e.Message}");
+                return schemaErrorMessage;
+            }
+
+            var response = new StringBuilder();
+            if (schema != null)
+            {
+                response.Append("Schema\n");
+                foreach (Microsoft.Graph.ExternalConnectors.Property property in schema.Properties)
                 {
                     response.Append(property.Name + " : " + property.Type).Append("\n");
                 }
@@ -136,12 +164,13 @@ namespace myIsvService.Controllers
                 var response = await graphClient.External.Connections
                                                 .Request()
                                                 .AddAsync(externalConnection);
-            } catch (Exception ex)
+            }
+            catch (Exception ex)
             {
                 _logger.LogError(ex.StackTrace);
                 throw ex;
             }
-            
+
             _logger.LogInformation($"Created connection with ID : {externalConnectionId}");
         }
 
@@ -176,7 +205,7 @@ namespace myIsvService.Controllers
                     },
                     new Microsoft.Graph.ExternalConnectors.Property
                     {
-                        Name = "userName",
+                        Name = "UserName",
                         Type = Microsoft.Graph.ExternalConnectors.PropertyType.String,
                         IsQueryable = true,
                         IsRetrievable = true,
@@ -194,34 +223,121 @@ namespace myIsvService.Controllers
                                                 .Header("Prefer", "respond-async")
                                                 .CreateAsync(schema);
                 _logger.LogInformation(response?.Id);
-            } catch (Exception ex)
+            }
+            catch (Exception ex)
             {
                 _logger.LogError(ex.StackTrace);
                 throw ex;
             }
-            
 
             _logger.LogInformation($"Sent request to create schema with ID.");
-        } 
+        }
+
+        private async Task ScheduleItemIngestion(string externalConnectionId)
+        {
+            await CheckConnectionStatus(externalConnectionId);
+            await CheckSchemaStatus(externalConnectionId);
+            await IngestItems(externalConnectionId);
+        }
+
+        private async Task CheckConnectionStatus(string externalConnectionId)
+        {
+            _logger.LogInformation($"Checking connection status for : {externalConnectionId}");
+            for (int attempt = 0; attempt < maxAttemptsForSchema; attempt++)
+            {
+                try
+                {
+                    // sleep for 1 minute
+                    Thread.Sleep(1000 * 60);
+                    _logger.LogInformation($"Check connection status attempt : {attempt + 1}");
+
+                    var connectionStatus = await GetConnection(externalConnectionId);
+
+                    if (!string.IsNullOrWhiteSpace(connectionStatus) && string.Equals("Ready", connectionStatus, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogInformation($"Connection created");
+                        return;
+                    }
+                    _logger.LogInformation($"Connection not ready yet.");
+                }
+                catch (Exception e)
+                {
+                    _logger.LogError(e.Message + "\n" + e.StackTrace);
+                }
+
+            }
+
+            throw new Exception("Unable to create connection");
+        }
+
+        private async Task CheckSchemaStatus(string externalConnectionId)
+        {
+            _logger.LogInformation($"Checking schema creation status for : {externalConnectionId}");
+            for (int attempt = 0; attempt < maxAttemptsForSchema; attempt++)
+            {
+                try
+                {
+                    // sleep for 20 seconds
+                    Thread.Sleep(1000 * 20);
+                    _logger.LogInformation($"Checking schema attempt number : {attempt + 1}");
+
+                    var schemaStatus = await GetSchema(externalConnectionId);
+
+                    if (!string.IsNullOrWhiteSpace(schemaStatus))
+                    {
+                        _logger.LogInformation($"Schema created");
+                        return;
+                    }
+                    _logger.LogInformation($"Schema not created yet.");
+                }
+                catch (Exception e)
+                {
+                    _logger.LogError(e.Message + "\n" + e.StackTrace);
+                }
+            }
+
+            throw new Exception("Unable to create schema");
+        }
+
+        private async Task IngestItems(string externalConnectionId)
+        {
+            for (int itemIndex = 0; itemIndex < numberOfMessages; itemIndex++)
+            {
+                try
+                {
+                    _logger.LogInformation($"Ingesting items for : {externalConnectionId}.");
+
+
+                    // Sleep for 3 seconds
+                    Thread.Sleep(1000 * 3);
+                    _logger.LogInformation($"Ingesting item number : {itemIndex + 1}.");
+
+                    await IngestItem(externalConnectionId);
+                }
+                catch (Exception e)
+                {
+                    _logger.LogError(e.Message + "\n" + e.StackTrace);
+                }
+            }
+        }
 
         private async Task IngestItem(string externalConnectionId)
         {
             _logger.LogInformation($"writing object for {externalConnectionId}");
 
             List<Microsoft.Graph.ExternalConnectors.Acl> acls = GetAcls();
+            IDictionary<string, object> additionalData = ISVServiceUtilities.GetAdditionalData();
             Microsoft.Graph.ExternalConnectors.Properties properties = new Microsoft.Graph.ExternalConnectors.Properties
             {
-                AdditionalData = new Dictionary<string, object>()
-                {
-                    {"userTitle", "CEO"},
-                    {"userName", "ISV Name"},
-                    {"userId", "ISV ID"}
-                }
+                AdditionalData = additionalData
             };
+
+            var contentData = ISVServiceUtilities.GetContentData(additionalData);
+            _logger.LogInformation($"ContentData : {contentData}");
 
             var content = new Microsoft.Graph.ExternalConnectors.ExternalItemContent
             {
-                Value = "CEO",
+                Value = contentData,
                 Type = Microsoft.Graph.ExternalConnectors.ExternalItemContentType.Text,
                 ODataType = null
             };
@@ -235,7 +351,7 @@ namespace myIsvService.Controllers
 
             try
             {
-                var response = await graphClient.External.Connections[externalConnectionId].Items["TSP228082938"]
+                var response = await graphClient.External.Connections[externalConnectionId].Items[Guid.NewGuid().ToString()]
                                                 .Request()
                                                 .PutAsync(externalItem);
                 _logger.LogInformation(response?.Id);
@@ -245,7 +361,7 @@ namespace myIsvService.Controllers
                 _logger.LogError(ex.StackTrace);
                 throw ex;
             }
-            
+
 
             _logger.LogInformation($"Done writing object for {externalConnectionId}");
         }
