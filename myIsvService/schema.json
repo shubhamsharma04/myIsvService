@@ -1,0 +1,28 @@
+{
+  "baseType": "microsoft.graph.externalItem",
+  "properties": [
+    {
+      "name": "Question",
+      "type": "String",
+      "isSearchable": "true",
+      "isRetrievable": "true",
+      "labels": [
+        "title"
+      ]
+    },
+    {
+      "name": "Answer",
+      "type": "String",
+      "isQueryable": "true",
+      "isRetrievable": "true",
+      "isSearchable": "true"
+    },
+    {
+      "name": "UserName",
+      "type": "String",
+      "isQueryable": "true",
+      "isRetrievable": "true",
+      "isSearchable": "true"
+    }
+  ]
+}

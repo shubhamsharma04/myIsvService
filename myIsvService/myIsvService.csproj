@@ -9,6 +9,8 @@
     <PackageReference Include="Microsoft.Extensions.Logging.AzureAppServices" Version="5.0.5" />
     <PackageReference Include="Microsoft.Graph.Auth" Version="1.0.0-preview.7" />
     <PackageReference Include="Microsoft.Graph.Beta" Version="4.2.0-preview" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="6.11.0" />
   </ItemGroup>
 
 

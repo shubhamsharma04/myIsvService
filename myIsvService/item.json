@@ -1,0 +1,20 @@
+{
+  "@odata.type": "microsoft.graph.externalItem",
+  "acl": [
+    {
+      "type": "user",
+      "value": "cbb6d774-d245-4927-9a4f-eea22c3f7ff4",
+      "accessType": "grant",
+      "identitySource": "azureActiveDirectory"
+    }
+  ],
+  "properties": {
+    "Question": "{0}",
+    "Answer": "{1}",
+    "UserName": "{2}"
+  },
+  "content": {
+    "value": "{3}",
+    "type": "text"
+  }
+}

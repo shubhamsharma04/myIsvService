@@ -17,12 +17,12 @@ namespace myIsvService.Controllers
     [Route("[controller]")]
     public class IsvServiceController : ControllerBase
     {
-        private string clientId = "5002759b-3b93-4c7e-bdc1-48a4b2842404";
-        private string tenantId = "d8cbc5c5-e484-48ea-af80-fc4083a2a740";
-        private string userId = "cbb6d774-d245-4927-9a4f-eea22c3f7ff4";
         private string schemaErrorMessage = "Unable to find schema";
-        private int maxAttemptsForSchema = 5;
-        private int numberOfMessages = 10;
+        private int maxAttempts = 6;
+        private int numberOfMessages = 4;
+        private static string clientId = Environment.GetEnvironmentVariable(nameof(clientId));
+        private static string tenantId = Environment.GetEnvironmentVariable(nameof(tenantId));
+        private static string userId = Environment.GetEnvironmentVariable(nameof(userId));
         private static string clientSecret = Environment.GetEnvironmentVariable(nameof(clientSecret));
 
         private GraphServiceClient graphClient;
@@ -31,6 +31,7 @@ namespace myIsvService.Controllers
         public IsvServiceController(ILogger<IsvServiceController> logger)
         {
             graphClient = GetGraphClient();
+            ISVServiceUtilities.LoadData();
             _logger = logger;
         }
 
@@ -46,6 +47,12 @@ namespace myIsvService.Controllers
         public async Task<string> CreateConnectionAndSchema([FromRoute] string externalConnectionId)
         {
             _logger.LogInformation("starting creating connection and schema.");
+            externalConnectionId = externalConnectionId.Replace("-", string.Empty);
+            if(externalConnectionId.Length > 32)
+            {
+                throw new ArgumentException($"The length of connection ID cannot be greater than 32. Length of connectionID : {externalConnectionId.Length}.");
+            }
+
             await CreateConnection(externalConnectionId);
             await CreateSchema(externalConnectionId);
 
@@ -58,7 +65,7 @@ namespace myIsvService.Controllers
         [Route("{externalConnectionId}")]
         public async Task<string> CreateItem([FromRoute] string externalConnectionId)
         {
-            _logger.LogInformation("Ingesting item");
+            _logger.LogInformation($"Ingesting item for connection with ID: {externalConnectionId}");
             await IngestItem(externalConnectionId);
             return "";
         }
@@ -171,7 +178,7 @@ namespace myIsvService.Controllers
                 throw ex;
             }
 
-            _logger.LogInformation($"Created connection with ID : {externalConnectionId}");
+            _logger.LogInformation($"Created connection with ID : {externalConnectionId}. The connection may not yet be ready to receive data.");
         }
 
         private async Task CreateSchema(string externalConnectionId)
@@ -230,7 +237,7 @@ namespace myIsvService.Controllers
                 throw ex;
             }
 
-            _logger.LogInformation($"Sent request to create schema with ID.");
+            _logger.LogInformation($"Sent request to create schema with ID : {externalConnectionId}.");
         }
 
         private async Task ScheduleItemIngestion(string externalConnectionId)
@@ -242,14 +249,14 @@ namespace myIsvService.Controllers
 
         private async Task CheckConnectionStatus(string externalConnectionId)
         {
-            _logger.LogInformation($"Checking connection status for : {externalConnectionId}");
-            for (int attempt = 0; attempt < maxAttemptsForSchema; attempt++)
+            _logger.LogInformation($"Checking connection status for : {externalConnectionId}.");
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
                 try
                 {
                     // sleep for 1 minute
                     Thread.Sleep(1000 * 60);
-                    _logger.LogInformation($"Check connection status attempt : {attempt + 1}");
+                    _logger.LogInformation($"Checking connection status. Attempt : {attempt + 1} out of : {maxAttempts}");
 
                     var connectionStatus = await GetConnection(externalConnectionId);
 
@@ -272,14 +279,12 @@ namespace myIsvService.Controllers
 
         private async Task CheckSchemaStatus(string externalConnectionId)
         {
-            _logger.LogInformation($"Checking schema creation status for : {externalConnectionId}");
-            for (int attempt = 0; attempt < maxAttemptsForSchema; attempt++)
+            _logger.LogInformation($"Checking the status of schema creation operation for : {externalConnectionId}");
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
                 try
                 {
-                    // sleep for 20 seconds
-                    Thread.Sleep(1000 * 20);
-                    _logger.LogInformation($"Checking schema attempt number : {attempt + 1}");
+                    _logger.LogInformation($"Checking schema attempt. Attempt : {attempt + 1} out of : {maxAttempts}");
 
                     var schemaStatus = await GetSchema(externalConnectionId);
 
@@ -289,6 +294,9 @@ namespace myIsvService.Controllers
                         return;
                     }
                     _logger.LogInformation($"Schema not created yet.");
+
+                    // sleep for 20 seconds
+                    Thread.Sleep(1000 * 20);
                 }
                 catch (Exception e)
                 {
@@ -307,7 +315,6 @@ namespace myIsvService.Controllers
                 {
                     _logger.LogInformation($"Ingesting items for : {externalConnectionId}.");
 
-
                     // Sleep for 3 seconds
                     Thread.Sleep(1000 * 3);
                     _logger.LogInformation($"Ingesting item number : {itemIndex + 1}.");
@@ -319,11 +326,13 @@ namespace myIsvService.Controllers
                     _logger.LogError(e.Message + "\n" + e.StackTrace);
                 }
             }
+
+            _logger.LogInformation($"Finished batch ingesting items.");
         }
 
         private async Task IngestItem(string externalConnectionId)
         {
-            _logger.LogInformation($"writing object for {externalConnectionId}");
+            _logger.LogInformation($"writing object");
 
             List<Microsoft.Graph.ExternalConnectors.Acl> acls = GetAcls();
             IDictionary<string, object> additionalData = ISVServiceUtilities.GetAdditionalData();
