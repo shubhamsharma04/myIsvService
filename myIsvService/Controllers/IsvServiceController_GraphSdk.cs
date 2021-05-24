@@ -1,4 +1,4 @@
-﻿using System;
+﻿/*using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -48,7 +48,7 @@ namespace myIsvService.Controllers
         {
             _logger.LogInformation("starting creating connection and schema.");
             externalConnectionId = externalConnectionId.Replace("-", string.Empty);
-            if (externalConnectionId.Length > 32)
+            if(externalConnectionId.Length > 32)
             {
                 throw new ArgumentException($"The length of connection ID cannot be greater than 32. Length of connectionID : {externalConnectionId.Length}.");
             }
@@ -397,3 +397,4 @@ namespace myIsvService.Controllers
         }
     }
 }
+*/
