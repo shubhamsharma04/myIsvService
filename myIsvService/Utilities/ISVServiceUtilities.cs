@@ -1,8 +1,10 @@
-﻿using myIsvService.Models;
+﻿using Microsoft.Graph;
+using myIsvService.Models;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -38,7 +40,7 @@ namespace myIsvService.Utilities
                 return;
             }
 
-            List<QnA> dataset = File.ReadAllLines(Path.Combine(Directory.GetCurrentDirectory(), "data.json"))
+            List<QnA> dataset = System.IO.File.ReadAllLines(Path.Combine(System.IO.Directory.GetCurrentDirectory(), "data.json"))
                 .Select(line => JsonConvert.DeserializeObject<QnA>(line))
                 .ToList();
 
@@ -97,15 +99,15 @@ namespace myIsvService.Utilities
             return stringBuilder.ToString();
         }
 
-        internal static Item GetItem()
+        internal static Models.Item GetItem()
         {
-            Item item = new Item();
+            Models.Item item = new Models.Item();
             item.acl = GetAcls();
 
             int questionIndex = new Random().Next(answersByQuestions.Count);
             int userIndex = new Random().Next(userNames.Count);
 
-            Properties properties = new Properties
+            Models.Properties properties = new Models.Properties
             {
                 Question = answersByQuestions.ElementAt(questionIndex).Key,
                 Answer = answersByQuestions.ElementAt(questionIndex).Value,
@@ -123,9 +125,9 @@ namespace myIsvService.Utilities
             return item;
         }
 
-        private static List<Acl> GetAcls()
+        private static List<Models.Acl> GetAcls()
         {
-            Acl first_acl = new Acl
+            Models.Acl first_acl = new Models.Acl
             {
                 type = "user",
                 value = "cbb6d774-d245-4927-9a4f-eea22c3f7ff4",
@@ -133,7 +135,7 @@ namespace myIsvService.Utilities
                 identitySource = "azureActiveDirectory"
             };
 
-            Acl second_acl = new Acl
+            Models.Acl second_acl = new Models.Acl
             {
                 type = "user",
                 value = "06085933-cbc3-4cc0-bdc6-9ff75933ef97",
@@ -141,10 +143,43 @@ namespace myIsvService.Utilities
                 identitySource = "azureActiveDirectory"
             };
 
-            List<Acl> acls = new List<Acl>();
+            List<Models.Acl> acls = new List<Models.Acl>();
             acls.Add(first_acl);
             acls.Add(second_acl);
             return acls;
+        }
+
+        public static string GetTenantId(ChangeNotification changeNotification)
+        {
+            // return "d8cbc5c5-e484-48ea-af80-fc4083a2a740";
+            return changeNotification.TenantId.ToString();
+        }
+
+        public static string GetAadAppId(string jwtToken)
+        {
+            var handler = new JwtSecurityTokenHandler();
+            var token = handler.ReadJwtToken(jwtToken);
+
+            // return "5002759b-3b93-4c7e-bdc1-48a4b2842404";
+            return token.Audiences.First();
+        }
+
+        internal static bool IsConnectionReady(GetConnectionsResponse connectionResponse, string externalConnectionId)
+        {
+            if(connectionResponse == null)
+            {
+                return false;
+            }
+            Models.ExternalConnection[] externalConnections = connectionResponse.Value;
+            if (externalConnections== null || externalConnections.Length == 0)
+            {
+                return false;
+            }
+            else
+            {
+                return externalConnections.Any(connection => string.Equals(externalConnectionId, connection.Id, StringComparison.OrdinalIgnoreCase) 
+                    && connection.ConnectionState == Models.ConnectionState.Ready);
+            }
         }
     }
 }
